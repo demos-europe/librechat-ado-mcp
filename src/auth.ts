@@ -92,6 +92,16 @@ function createAuthenticator(type: string, tenantId?: string): () => Promise<str
         return token;
       };
 
+    case "pat":
+      // Personal Access Token authentication for on-premise Azure DevOps Server
+      return async () => {
+        const pat = process.env.AZURE_DEVOPS_PAT;
+        if (!pat) {
+          throw new Error("AZURE_DEVOPS_PAT environment variable is required for PAT authentication.");
+        }
+        return pat;
+      };
+
     case "azcli":
     case "env":
       if (type !== "env") {
