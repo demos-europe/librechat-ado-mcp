@@ -11,6 +11,7 @@ on:
 
 jobs:
   pre-release:
+    if: github.repository == 'microsoft/azure-devops-mcp'
     runs-on: ubuntu-latest
 
     steps:

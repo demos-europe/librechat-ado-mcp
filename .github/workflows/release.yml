@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   publish:
+    if: github.repository == 'microsoft/azure-devops-mcp'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
