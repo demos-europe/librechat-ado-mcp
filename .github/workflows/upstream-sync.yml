@@ -84,7 +84,7 @@ jobs:
 
           **Bitte prüfen:** On-premise-Patch (\`feat: add on-premise Azure DevOps Server support\`, Commit \`cf9dd43\`) noch intakt?"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.FORK_ACCESS_TOKEN }}
 
       - name: Create issue (success)
         if: steps.branch_check.outputs.exists == 'false' && steps.merge.outputs.result == 'success'
@@ -96,7 +96,7 @@ jobs:
           Ein PR wurde erstellt. Bitte prüfen ob der On-premise-Patch noch korrekt funktioniert." \
             --assignee heissdemos
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.FORK_ACCESS_TOKEN }}
 
       - name: Create issue (conflict)
         if: steps.branch_check.outputs.exists == 'false' && steps.merge.outputs.result == 'conflict'
@@ -117,4 +117,4 @@ jobs:
           Besonders auf den On-premise-Patch achten (\`feat: add on-premise Azure DevOps Server support\`, Commit \`cf9dd43\`)." \
             --assignee heissdemos
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.FORK_ACCESS_TOKEN }}
