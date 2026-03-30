@@ -1,0 +1,114 @@
+name: Upstream Sync
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'  # Montags 08:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch latest upstream release
+        id: upstream
+        run: |
+          LATEST=$(gh api repos/microsoft/azure-devops-mcp/releases/latest --jq '.tag_name')
+          echo "tag=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "Latest upstream release: $LATEST"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if sync branch already exists
+        id: branch_check
+        run: |
+          BRANCH="sync/upstream-${{ steps.upstream.outputs.tag }}"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code origin "refs/heads/$BRANCH" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Branch $BRANCH already exists — skipping."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Add upstream remote and fetch tag
+        if: steps.branch_check.outputs.exists == 'false'
+        run: |
+          git remote add upstream https://github.com/microsoft/azure-devops-mcp.git
+          git fetch upstream tag ${{ steps.upstream.outputs.tag }} --no-tags
+
+      - name: Attempt merge
+        if: steps.branch_check.outputs.exists == 'false'
+        id: merge
+        run: |
+          BRANCH="${{ steps.branch_check.outputs.branch }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+
+          if git merge ${{ steps.upstream.outputs.tag }} --no-edit -m "chore: merge upstream ${{ steps.upstream.outputs.tag }}"; then
+            echo "result=success" >> "$GITHUB_OUTPUT"
+          else
+            git merge --abort
+            echo "result=conflict" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push branch (on success)
+        if: steps.branch_check.outputs.exists == 'false' && steps.merge.outputs.result == 'success'
+        run: git push origin ${{ steps.branch_check.outputs.branch }}
+
+      - name: Create PR (on success)
+        if: steps.branch_check.outputs.exists == 'false' && steps.merge.outputs.result == 'success'
+        run: |
+          gh pr create \
+            --base main \
+            --head "${{ steps.branch_check.outputs.branch }}" \
+            --title "chore: upstream sync ${{ steps.upstream.outputs.tag }}" \
+            --body "Automatischer Upstream-Sync von \`microsoft/azure-devops-mcp\` ${{ steps.upstream.outputs.tag }}.
+
+          **Bitte prüfen:** On-premise-Patch (\`feat: add on-premise Azure DevOps Server support\`, Commit \`cf9dd43\`) noch intakt?"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create issue (success)
+        if: steps.branch_check.outputs.exists == 'false' && steps.merge.outputs.result == 'success'
+        run: |
+          gh issue create \
+            --title "Upstream sync ${{ steps.upstream.outputs.tag }} — PR zur Prüfung bereit" \
+            --body "Upstream \`microsoft/azure-devops-mcp\` ${{ steps.upstream.outputs.tag }} wurde automatisch gemergt.
+
+          Ein PR wurde erstellt. Bitte prüfen ob der On-premise-Patch noch korrekt funktioniert." \
+            --assignee heissdemos
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create issue (conflict)
+        if: steps.branch_check.outputs.exists == 'false' && steps.merge.outputs.result == 'conflict'
+        run: |
+          gh issue create \
+            --title "Upstream sync ${{ steps.upstream.outputs.tag }} — Merge Conflict, manueller Eingriff nötig" \
+            --body "Upstream \`microsoft/azure-devops-mcp\` ${{ steps.upstream.outputs.tag }} konnte nicht automatisch gemergt werden.
+
+          **Manueller Merge erforderlich:**
+          \`\`\`bash
+          git remote add upstream https://github.com/microsoft/azure-devops-mcp.git
+          git fetch upstream tag ${{ steps.upstream.outputs.tag }} --no-tags
+          git checkout -b sync/upstream-${{ steps.upstream.outputs.tag }}
+          git merge ${{ steps.upstream.outputs.tag }}
+          # Konflikte lösen, dann pushen und PR erstellen
+          \`\`\`
+
+          Besonders auf den On-premise-Patch achten (\`feat: add on-premise Azure DevOps Server support\`, Commit \`cf9dd43\`)." \
+            --assignee heissdemos
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
