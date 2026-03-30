@@ -63,6 +63,12 @@ jobs:
             echo "result=conflict" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Remove upstream build workflow
+        if: steps.branch_check.outputs.exists == 'false' && steps.merge.outputs.result == 'success'
+        run: |
+          git rm -f .github/workflows/build.yml || true
+          git commit --amend --no-edit
+
       - name: Push branch (on success)
         if: steps.branch_check.outputs.exists == 'false' && steps.merge.outputs.result == 'success'
         run: git push origin ${{ steps.branch_check.outputs.branch }}
