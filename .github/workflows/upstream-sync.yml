@@ -95,7 +95,6 @@ jobs:
             --body "Upstream \`microsoft/azure-devops-mcp\` ${{ steps.upstream.outputs.tag }} wurde automatisch gemergt.
 
           Ein PR wurde erstellt. Bitte prüfen ob der On-premise-Patch noch korrekt funktioniert." \
-            --assignee heissdemos
         env:
           GH_TOKEN: ${{ secrets.FORK_ACCESS_TOKEN }}
 
@@ -116,6 +115,5 @@ jobs:
           \`\`\`
 
           Besonders auf den On-premise-Patch achten (\`feat: add on-premise Azure DevOps Server support\`, Commit \`cf9dd43\`)." \
-            --assignee heissdemos
         env:
           GH_TOKEN: ${{ secrets.FORK_ACCESS_TOKEN }}
