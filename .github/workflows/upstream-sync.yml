@@ -66,6 +66,11 @@ jobs:
         if: steps.branch_check.outputs.exists == 'false' && steps.merge.outputs.result == 'success'
         run: |
           git rm -f .github/workflows/build.yml || true
+          git rm -f .github/workflows/dependency-review.yml || true
+          git rm -f .github/workflows/ai-issue-processing.yml || true
+          git rm -f .github/workflows/pre-release.yml || true
+          git rm -f .github/workflows/release.yml || true
+          git rm -f .github/workflows/version-update.yml || true
           git commit --amend --no-edit
 
       - name: Push branch (on success)
