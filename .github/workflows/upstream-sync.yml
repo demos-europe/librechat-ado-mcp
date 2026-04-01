@@ -77,6 +77,7 @@ jobs:
         if: steps.branch_check.outputs.exists == 'false' && steps.merge.outputs.result == 'success'
         run: |
           gh pr create \
+            --repo demos-europe/librechat-ado-mcp \
             --base main \
             --head "${{ steps.branch_check.outputs.branch }}" \
             --title "chore: upstream sync ${{ steps.upstream.outputs.tag }}" \
