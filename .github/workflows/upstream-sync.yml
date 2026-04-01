@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  issues: write
   pull-requests: write
 
 jobs:
@@ -87,33 +86,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.FORK_ACCESS_TOKEN }}
 
-      - name: Create issue (success)
-        if: steps.branch_check.outputs.exists == 'false' && steps.merge.outputs.result == 'success'
-        run: |
-          gh issue create \
-            --title "Upstream sync ${{ steps.upstream.outputs.tag }} — PR zur Prüfung bereit" \
-            --body "Upstream \`microsoft/azure-devops-mcp\` ${{ steps.upstream.outputs.tag }} wurde automatisch gemergt.
-
-          Ein PR wurde erstellt. Bitte prüfen ob der On-premise-Patch noch korrekt funktioniert." \
-        env:
-          GH_TOKEN: ${{ secrets.FORK_ACCESS_TOKEN }}
-
-      - name: Create issue (conflict)
+      - name: Log conflict (no auto-merge possible)
         if: steps.branch_check.outputs.exists == 'false' && steps.merge.outputs.result == 'conflict'
         run: |
-          gh issue create \
-            --title "Upstream sync ${{ steps.upstream.outputs.tag }} — Merge Conflict, manueller Eingriff nötig" \
-            --body "Upstream \`microsoft/azure-devops-mcp\` ${{ steps.upstream.outputs.tag }} konnte nicht automatisch gemergt werden.
-
-          **Manueller Merge erforderlich:**
-          \`\`\`bash
-          git remote add upstream https://github.com/microsoft/azure-devops-mcp.git
-          git fetch upstream tag ${{ steps.upstream.outputs.tag }} --no-tags
-          git checkout -b sync/upstream-${{ steps.upstream.outputs.tag }}
-          git merge ${{ steps.upstream.outputs.tag }}
-          # Konflikte lösen, dann pushen und PR erstellen
-          \`\`\`
-
-          Besonders auf den On-premise-Patch achten (\`feat: add on-premise Azure DevOps Server support\`, Commit \`cf9dd43\`)." \
-        env:
-          GH_TOKEN: ${{ secrets.FORK_ACCESS_TOKEN }}
+          echo "::warning::Merge conflict detected for ${{ steps.upstream.outputs.tag }}. Manual merge required."
+          echo "Run: git remote add upstream https://github.com/microsoft/azure-devops-mcp.git"
+          echo "     git fetch upstream tag ${{ steps.upstream.outputs.tag }} --no-tags"
+          echo "     git checkout -b sync/upstream-${{ steps.upstream.outputs.tag }}"
+          echo "     git merge ${{ steps.upstream.outputs.tag }}"
