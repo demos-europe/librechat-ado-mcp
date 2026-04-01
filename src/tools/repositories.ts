@@ -20,6 +20,7 @@ import {
   GitPullRequest,
   GitPullRequestCommentThread,
   Comment,
+  VersionControlRecursionType,
 } from "azure-devops-node-api/interfaces/GitInterfaces.js";
 import { z } from "zod";
 import { getCurrentUserDetails, getUserIdFromEmail } from "./auth.js";
@@ -46,6 +47,8 @@ const REPO_TOOLS = {
   update_pull_request_thread: "repo_update_pull_request_thread",
   search_commits: "repo_search_commits",
   list_pull_requests_by_commits: "repo_list_pull_requests_by_commits",
+  vote_pull_request: "repo_vote_pull_request",
+  list_directory: "repo_list_directory",
 };
 
 function branchesFilterOutIrrelevantProperties(branches: GitRef[], top: number) {
@@ -134,6 +137,24 @@ function trimPullRequest(pr: GitPullRequest, includeDescription = false) {
   };
 }
 
+// Helper function to build a version descriptor from branch or commit
+function buildVersionDescriptor(version?: string, versionType?: string): GitVersionDescriptor | undefined {
+  if (!version) {
+    return undefined;
+  }
+
+  const versionTypeMap: Record<string, GitVersionType> = {
+    Branch: GitVersionType.Branch,
+    Commit: GitVersionType.Commit,
+    Tag: GitVersionType.Tag,
+  };
+
+  return {
+    version: version,
+    versionType: versionTypeMap[versionType || "Branch"] ?? GitVersionType.Branch,
+  };
+}
+
 function configureRepoTools(server: McpServer, tokenProvider: () => Promise<string>, connectionProvider: () => Promise<WebApi>, userAgentProvider: () => string) {
   server.tool(
     REPO_TOOLS.create_pull_request,
@@ -165,7 +186,7 @@ function configureRepoTools(server: McpServer, tokenProvider: () => Promise<stri
 
         const labelDefinitions: WebApiTagDefinition[] | undefined = labels ? labels.map((label) => ({ name: label })) : undefined;
 
-        const pullRequest = await gitApi.createPullRequest(
+        let pullRequest = await gitApi.createPullRequest(
           {
             sourceRefName,
             targetRefName,
@@ -179,6 +200,17 @@ function configureRepoTools(server: McpServer, tokenProvider: () => Promise<stri
           },
           repositoryId
         );
+
+        if (!pullRequest) {
+          const prs = await gitApi.getPullRequests(repositoryId, { sourceRefName, targetRefName, status: PullRequestStatus.Active }, undefined, undefined, 0, 1);
+          if (prs && prs.length > 0) {
+            pullRequest = prs[0];
+          } else {
+            return {
+              content: [{ type: "text", text: "Pull request created but API returned no data." }],
+            };
+          }
+        }
 
         const trimmedPullRequest = trimPullRequest(pullRequest, true);
 
@@ -914,16 +946,19 @@ function configureRepoTools(server: McpServer, tokenProvider: () => Promise<stri
     REPO_TOOLS.get_pull_request_by_id,
     "Get a pull request by its ID.",
     {
-      repositoryId: z.string().describe("The ID of the repository where the pull request is located."),
+      repositoryId: z
+        .string()
+        .describe("The ID or name of the repository where the pull request is located. When using a repository name instead of a GUID, the project parameter must also be provided."),
       pullRequestId: z.number().describe("The ID of the pull request to retrieve."),
+      project: z.string().optional().describe("Project ID or project name. Required when repositoryId is a repository name instead of a GUID."),
       includeWorkItemRefs: z.boolean().optional().default(false).describe("Whether to reference work items associated with the pull request."),
       includeLabels: z.boolean().optional().default(false).describe("Whether to include a summary of labels in the response."),
     },
-    async ({ repositoryId, pullRequestId, includeWorkItemRefs, includeLabels }) => {
+    async ({ repositoryId, pullRequestId, project, includeWorkItemRefs, includeLabels }) => {
       try {
         const connection = await connectionProvider();
         const gitApi = await connection.getGitApi();
-        const pullRequest = await gitApi.getPullRequest(repositoryId, pullRequestId, undefined, undefined, undefined, undefined, undefined, includeWorkItemRefs);
+        const pullRequest = await gitApi.getPullRequest(repositoryId, pullRequestId, project, undefined, undefined, undefined, undefined, includeWorkItemRefs);
 
         if (includeLabels) {
           try {
@@ -1436,6 +1471,128 @@ function configureRepoTools(server: McpServer, tokenProvider: () => Promise<stri
 
         return {
           content: [{ type: "text", text: `Error querying pull requests by commits: ${errorMessage}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    REPO_TOOLS.vote_pull_request,
+    "Cast a vote on a pull request. Automatically adds the current user as a reviewer if they are not already one.",
+    {
+      repositoryId: z.string().describe("The ID of the repository."),
+      pullRequestId: z.number().describe("The ID of the pull request."),
+      vote: z.enum(["Approved", "ApprovedWithSuggestions", "NoVote", "WaitingForAuthor", "Rejected"]).describe("The vote to cast: Approved(10), Suggestions(5), None(0), Waiting(-5), Rejected(-10)."),
+    },
+    async ({ repositoryId, pullRequestId, vote }) => {
+      const connection = await connectionProvider();
+      const gitApi = await connection.getGitApi();
+
+      const userDetails = await getCurrentUserDetails(tokenProvider, connectionProvider, userAgentProvider);
+      const userId = userDetails.authenticatedUser.id;
+
+      if (!userId) {
+        throw new Error("Could not determine authenticated user ID.");
+      }
+
+      const voteMap: Record<string, number> = {
+        Approved: 10,
+        ApprovedWithSuggestions: 5,
+        NoVote: 0,
+        WaitingForAuthor: -5,
+        Rejected: -10,
+      };
+
+      await gitApi.createPullRequestReviewer({ vote: voteMap[vote], id: userId } as any, repositoryId, pullRequestId, userId);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Successfully cast vote '${vote}' on PR #${pullRequestId}.`,
+          },
+        ],
+      };
+    }
+  );
+
+  server.tool(
+    REPO_TOOLS.list_directory,
+    "List files and folders in a directory within a repository. Useful for exploring the structure of a codebase or finding related files.",
+    {
+      repositoryId: z.string().describe("The ID or name of the repository."),
+      path: z.string().optional().default("/").describe("The directory path to list (e.g., '/src' or '/src/components'). Defaults to repository root."),
+      project: z.string().optional().describe("Project ID or name. Required if repositoryId is a name rather than a GUID."),
+      version: z.string().optional().describe("The version identifier - branch name (e.g., 'main'), tag name, or commit SHA. Defaults to the repository's default branch."),
+      versionType: z.enum(["Branch", "Commit", "Tag"]).optional().default("Branch").describe("The type of version identifier: 'Branch', 'Commit', or 'Tag'. Defaults to 'Branch'."),
+      recursive: z.boolean().optional().default(false).describe("Whether to list items recursively. Defaults to false."),
+      recursionDepth: z.number().optional().default(1).describe("Maximum depth for recursive listing (1-10). Only applies when recursive is true. Defaults to 1."),
+    },
+    async ({ repositoryId, path, project, version, versionType, recursive, recursionDepth }) => {
+      try {
+        const connection = await connectionProvider();
+        const gitApi = await connection.getGitApi();
+
+        const versionDescriptor = buildVersionDescriptor(version, versionType);
+        const clampedDepth = Math.min(Math.max(recursionDepth || 1, 1), 10);
+
+        let recursionType = VersionControlRecursionType.OneLevel;
+
+        if (recursive) {
+          recursionType = VersionControlRecursionType.Full;
+        }
+
+        const items = await gitApi.getItems(repositoryId, project, path, recursionType, true, false, false, false, versionDescriptor);
+
+        if (!items || items.length === 0) {
+          return {
+            content: [{ type: "text", text: `No items found at path: ${path}` }],
+          };
+        }
+
+        let filteredItems = items;
+
+        if (recursive && clampedDepth < 10) {
+          const basePath = path === "/" ? "" : path;
+          const baseDepth = basePath.split("/").filter((p) => p).length;
+
+          filteredItems = items.filter((item) => {
+            if (!item.path) return false;
+            const itemDepth = item.path.split("/").filter((p) => p).length;
+            return itemDepth <= baseDepth + clampedDepth;
+          });
+        }
+
+        const formattedItems = filteredItems.map((item) => ({
+          path: item.path,
+          isFolder: item.isFolder,
+          gitObjectType: item.gitObjectType,
+          commitId: item.commitId,
+          contentMetadata: item.contentMetadata
+            ? {
+                contentType: item.contentMetadata.contentType,
+                fileName: item.contentMetadata.fileName,
+              }
+            : undefined,
+        }));
+
+        const response = {
+          count: formattedItems.length,
+          path: path,
+          recursive: recursive,
+          recursionDepth: recursive ? clampedDepth : undefined,
+          items: formattedItems,
+        };
+
+        return {
+          content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+        };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+
+        return {
+          content: [{ type: "text", text: `Error listing directory: ${errorMessage}` }],
           isError: true,
         };
       }
